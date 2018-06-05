@@ -2,6 +2,6 @@
 <Workspace
    version = "1.0">
    <FileRef
-      location = "self:ARKit.xcodeproj">
+      location = "self:/Users/mac/Desktop/ARKit_example/ARMultiuser.xcodeproj">
    </FileRef>
 </Workspace>

@@ -13,23 +13,28 @@
 #import "Player.h"
 #import "FocusSquare.h"
 #import "ResManager.h"
+#import "MultipeerConnectivity.h"
 
-@interface ViewController ()<ARSCNViewDelegate, ARSessionDelegate, SCNPhysicsContactDelegate>
+@interface ViewController ()<ARSCNViewDelegate, ARSessionDelegate, SCNPhysicsContactDelegate, MultipeerConnectivityDelegate>
 {
     CGPoint screenCenter;
     NSMutableArray *walks;
     NSMutableArray *idles;
     
     NSMutableArray *playerArr;
+    
+    ARAnchor    *recodeAnchor;
 }
 
 @property(nonatomic, strong)ARSCNView *sceneView;
 
-@property(nonatomic, strong)ARWorldTrackingSessionConfiguration *configuration;
+@property(nonatomic, strong)ARWorldTrackingConfiguration *configuration;
 
-@property (strong, atomic, readwrite) PlaneNode* planeNode;
+@property (strong, atomic, readwrite)PlaneNode* planeNode;
 
 @property(nonatomic, strong)FocusSquare *focusSquare;
+
+@property(nonatomic, strong)MultipeerConnectivity *multipeerSession;
 
 @end
 
@@ -38,6 +43,9 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     
+    self.multipeerSession = [[MultipeerConnectivity alloc] init];
+    self.multipeerSession.delegate = self;
+    
     [self setupSceneView];
     
     [self loadRes];
@@ -45,6 +53,55 @@
     [self setupFocusSquare];
     
     [self setupGestureRecognizer];
+    
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+    btn.frame = CGRectMake(0.0, 0.0, 100, 50.0);
+    btn.backgroundColor = [UIColor redColor];
+    [btn addTarget:self action:@selector(click) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:btn];
+}
+
+- (void)click
+{
+    [self.sceneView.session getCurrentWorldMapWithCompletionHandler:^(ARWorldMap * _Nullable worldMap, NSError * _Nullable error) {
+        if (error) {
+            NSLog(@"error====%@",error);
+        }
+        
+        NSData *data = [NSKeyedArchiver archivedDataWithRootObject:worldMap requiringSecureCoding:true error:nil];
+        [self.multipeerSession sendToAllPeers:data];
+    }];
+}
+
+#pragma mark MultipeerConnectivityDelegate
+- (void)receivedDataHandler:(NSData *)data PeerID:(MCPeerID *)peerID
+{
+    id unarchived = [NSKeyedUnarchiver unarchivedObjectOfClass:[ARWorldMap classForKeyedUnarchiver] fromData:data error:nil];
+    
+    if ([unarchived isKindOfClass:[ARWorldMap class]]) {
+        NSLog(@"[unarchived class]====%@",[unarchived class]);
+        ARWorldMap *worldMap = unarchived;
+        self.configuration = [[ARWorldTrackingConfiguration alloc] init];
+        self.configuration.worldAlignment = ARWorldAlignmentGravity;
+        self.configuration.planeDetection = ARPlaneDetectionHorizontal|ARPlaneDetectionVertical;
+        self.configuration.initialWorldMap = worldMap;
+        [self.sceneView.session runWithConfiguration:self.configuration options:ARSessionRunOptionResetTracking|ARSessionRunOptionRemoveExistingAnchors];
+        
+        return;
+    }
+    
+    unarchived = [NSKeyedUnarchiver unarchivedObjectOfClass:[ARAnchor classForKeyedUnarchiver] fromData:data error:nil];
+    
+    if ([unarchived isKindOfClass:[ARAnchor class]]) {
+        NSLog(@"[unarchived class]====%@",[unarchived class]);
+        ARAnchor *anchor = unarchived;
+        
+        [self.sceneView.session addAnchor:anchor];
+        
+        return;
+    }
+    
+    NSLog(@"unknown data recieved from \(%@)",peerID.displayName);
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -93,11 +150,14 @@
 
 - (void)setupSession
 {
-    self.configuration = [[ARWorldTrackingSessionConfiguration alloc] init];
+    self.configuration = [[ARWorldTrackingConfiguration alloc] init];
     self.configuration.worldAlignment = ARWorldAlignmentGravity;
-    self.configuration.planeDetection = ARPlaneDetectionHorizontal;
+    self.configuration.planeDetection = ARPlaneDetectionHorizontal|ARPlaneDetectionVertical;
     self.configuration.lightEstimationEnabled = YES;
     [self.sceneView.session runWithConfiguration:self.configuration];
+    self.sceneView.session.delegate = self;
+    self.sceneView.debugOptions = ARSCNDebugOptionShowFeaturePoints;
+//    [ARSCNDebugOptions.showFeaturePoints]
 }
 
 - (void)pauseSession
@@ -167,7 +227,7 @@
 
 - (void)updateFocusSquare
 {
-    SCNVector3 existPos = [self worldPositionFromScreenPosition:screenCenter types:ARHitTestResultTypeExistingPlaneUsingExtent];
+    SCNVector3 existPos = [self worldPositionFromScreenPosition:screenCenter types:ARHitTestResultTypeExistingPlaneUsingGeometry];
     SCNVector3 virtualPos = [self worldPositionFromScreenPosition:screenCenter types:ARHitTestResultTypeExistingPlane];
     
     if (existPos.x == 0 && existPos.y == 0 && existPos.z == 0) {
@@ -191,6 +251,7 @@
 {
     ARHitTestResult *result = [self.sceneView hitTest:position types:types].firstObject;
     
+    recodeAnchor = [[ARAnchor alloc] initWithName:@"kakaxi" transform:result.worldTransform];
     SCNVector3 planeHitTestPosition = [self positionFromTransform:result.worldTransform];
     
     return planeHitTestPosition;
@@ -221,10 +282,10 @@
     if (![anchor isKindOfClass:[ARPlaneAnchor class]]) {
         return nil;
     }
-    
+
     PlaneNode *planeNode = [[PlaneNode alloc] init];
     [planeNode updateShapeNodeWithAnchor:(ARPlaneAnchor*)anchor];
-    
+
     return planeNode;
 }
 
@@ -257,17 +318,22 @@
 
 - (void)session:(ARSession *)session didAddAnchors:(NSArray<ARAnchor*>*)anchors
 {
-    
+    for (ARAnchor *anchor in anchors) {
+        if ([anchor.name isEqualToString:@"kakaxi"]) {
+            SCNVector3 planeHitTestPosition = [self positionFromTransform:anchor.transform];
+            [self setupPlayerWithPos:planeHitTestPosition];
+        }
+    }
 }
 
 - (void)session:(ARSession *)session didUpdateAnchors:(NSArray<ARAnchor*>*)anchors
 {
-    
+//    NSLog(@"更新平面");
 }
 
 - (void)session:(ARSession *)session didRemoveAnchors:(NSArray<ARAnchor*>*)anchors
 {
-    
+//    NSLog(@"移除平面");
 }
 
 #pragma mark - SCNPhysicsContactDelegate
@@ -300,7 +366,9 @@
 - (void)handleTap:(UIGestureRecognizer*)gestureRecognize
 {
     if ([self.focusSquare isInPlane]) {
-        [self setupPlayerWithPos:self.focusSquare.position];
+        [self.sceneView.session addAnchor:recodeAnchor];
+        NSData *data = [NSKeyedArchiver archivedDataWithRootObject:recodeAnchor requiringSecureCoding:true error:nil];
+        [self.multipeerSession sendToAllPeers:data];
     }
 }
 
