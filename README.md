@@ -9,4 +9,8 @@ This sample app demonstrates a simple shared AR experience for two or more iOS 1
 
 4、The other device displays a message indicating that it has received the map and is attempting to use it. When that process succeeds, both devices show virtual content at the same real-world positions, and tapping on either device places virtual content visible to both.
 
-![image](https://github.com/szt243660543/ARKit_example/blob/master/VID_20170619_1817151.gif) 
+ipad:
+![image](https://github.com/szt243660543/ARMultiuser/blob/master/WechatIMG238.jpeg) 
+
+iphone:
+![image](https://github.com/szt243660543/ARMultiuser/blob/master/WechatIMG239.jpeg) 
